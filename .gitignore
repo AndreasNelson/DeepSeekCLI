@@ -1,0 +1,25 @@
+# .NET Core
+[Bb]in/
+[Oo]bj/
+[Tt]est[Rr]esults/
+
+# Visual Studio
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+
+# Visual Studio Code
+.vscode/
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS generated files
+.DS_Store
+thumbs.db
+desktop.ini

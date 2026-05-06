@@ -21,7 +21,7 @@ public class OllamaClient(string baseUrl = "http://localhost:11434")
             Options = new Dictionary<string, object>
             {
                 { "temperature", 0 },
-                { "stop", new[] { "[TOOL:", "<|", "SYSTEM:" } } // Added stop tokens to prevent hallucination loops
+                { "stop", new[] { "[TOOL:", "<|", "SYSTEM:", "<｜begin▁of▁sentence｜>", "<｜tool▁calls▁begin｜>" } }
             }
         };
 

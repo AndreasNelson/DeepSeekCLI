@@ -51,6 +51,12 @@ while (true)
             AnsiConsole.Markup("[bold cyan]DeepSeek:[/] ");
             await foreach (var chunk in client.ChatStreamAsync(modelName, history))
             {
+                // Break if the model starts hallucinating unrelated sentences
+                if (chunk.Contains("<｜begin▁of▁sentence｜>") || chunk.Contains("Question:")) 
+                {
+                    break;
+                }
+                
                 Console.Write(chunk);
                 fullResponse += chunk;
             }

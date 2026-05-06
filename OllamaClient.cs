@@ -6,7 +6,7 @@ namespace DeepSeekCLI;
 
 public class OllamaClient(string baseUrl = "http://localhost:11434")
 {
-    private readonly HttpClient _httpClient = new() { BaseAddress = new Uri(baseUrl), Timeout = TimeSpan.FromMinutes(5) };
+    private readonly HttpClient _httpClient = new() { BaseAddress = new Uri(baseUrl), Timeout = TimeSpan.FromMinutes(10) };
 
     public async Task<List<string>> ListModelsAsync(CancellationToken cancellationToken = default)
     {
@@ -21,7 +21,9 @@ public class OllamaClient(string baseUrl = "http://localhost:11434")
             Options = new Dictionary<string, object>
             {
                 { "temperature", 0 },
-                { "stop", new[] { "[TOOL:", "<|", "SYSTEM:", "<｜begin▁of▁sentence｜>", "<｜tool▁calls▁begin｜>" } }
+                { "num_ctx", 8192 }, // Increased context window
+                { "top_p", 0.9 },
+                { "stop", new[] { "[TOOL:", "<|", "SYSTEM:", "<｜begin▁of▁sentence｜>", "User:", "You:" } }
             }
         };
 
@@ -43,7 +45,7 @@ public class OllamaClient(string baseUrl = "http://localhost:11434")
                 content = chunk?.Message?.Content;
                 isDone = chunk?.Done ?? false;
             }
-            catch (JsonException) { /* Handle malformed JSON if necessary */ }
+            catch (JsonException) { }
 
             if (content != null) yield return content;
             if (isDone) break;

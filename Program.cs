@@ -6,15 +6,15 @@ var client = new OllamaClient();
 var history = new List<ChatMessage>();
 
 var systemPrompt = """
-You are a coding assistant with access to:
+You are a coding assistant. You have access to:
 - [TOOL:LIST path]
 - [TOOL:READ path]
 - [TOOL:WRITE path] followed by a ```code block```
 
 Rules:
-1. One tool per turn.
+1. When providing code, ALWAYS use [TOOL:WRITE path] to save it to a file.
 2. Stop immediately after a tool call.
-3. Be concise.
+3. If you want to create a feature, write the necessary files.
 Current Directory: {0}
 """;
 
@@ -46,13 +46,11 @@ while (true)
         processingTools = false;
         string fullResponse = "";
 
-        // Start the thinking status but write chunks directly to console for speed/reliability
         await AnsiConsole.Status().StartAsync("Thinking...", async ctx =>
         {
             AnsiConsole.Markup("[bold cyan]DeepSeek:[/] ");
             await foreach (var chunk in client.ChatStreamAsync(modelName, history))
             {
-                // Write directly to standard output to avoid any Spectre formatting overhead during streaming
                 Console.Write(chunk);
                 fullResponse += chunk;
             }
@@ -67,15 +65,35 @@ while (true)
         var readMatch = Regex.Match(fullResponse, @"\[TOOL:READ\s+(.+?)\]", RegexOptions.IgnoreCase);
         var writeMatch = Regex.Match(fullResponse, @"\[TOOL:WRITE\s+(.+?)\]\s*```[\s\S]*?\n([\s\S]*?)```", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
+        // Heuristic: If model provides a filename and a code block but forgot the [TOOL:WRITE] tag
+        if (!writeMatch.Success)
+        {
+            var heuristicMatch = Regex.Match(fullResponse, @"(?:create|save|write to|file)\s+[`""]?([\w\.\-/]+)[`""]?[\s\S]*?```[\w]*\n([\s\S]*?)```", RegexOptions.IgnoreCase);
+            if (heuristicMatch.Success)
+            {
+                var path = heuristicMatch.Groups[1].Value.Trim().Replace("\"", "");
+                var content = heuristicMatch.Groups[2].Value;
+                try
+                {
+                    await File.WriteAllTextAsync(path, content);
+                    AnsiConsole.MarkupLine($"[yellow]SYSTEM: Heuristic match - Wrote {path}[/]");
+                    history.Add(new ChatMessage("system", $"Successfully wrote to {path} (via heuristic match)"));
+                    processingTools = true;
+                }
+                catch { }
+            }
+        }
+
         if (listMatch.Success)
         {
             var path = listMatch.Groups[1].Value.Trim().Replace("\"", "");
             try
             {
-                var entries = Directory.GetFileSystemEntries(path);
+                var dir = string.IsNullOrWhiteSpace(path) ? "." : path;
+                var entries = Directory.GetFileSystemEntries(dir);
                 var result = string.Join("\n", entries.Select(f => Path.GetFileName(f) + (Directory.Exists(f) ? "/" : "")));
-                AnsiConsole.MarkupLine($"[yellow]SYSTEM: Listed {path}[/]");
-                history.Add(new ChatMessage("system", $"Files in {path}:\n{result}"));
+                AnsiConsole.MarkupLine($"[yellow]SYSTEM: Listed {dir}[/]");
+                history.Add(new ChatMessage("system", $"Files in {dir}:\n{result}"));
                 processingTools = true;
             }
             catch (Exception ex) { history.Add(new ChatMessage("system", $"Error LIST: {ex.Message}")); processingTools = true; }

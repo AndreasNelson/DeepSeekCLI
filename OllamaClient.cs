@@ -16,7 +16,15 @@ public class OllamaClient(string baseUrl = "http://localhost:11434")
 
     public async IAsyncEnumerable<string> ChatStreamAsync(string model, List<ChatMessage> messages, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var request = new ChatRequest(model, messages, Stream: true);
+        var request = new ChatRequest(model, messages, Stream: true)
+        {
+            Options = new Dictionary<string, object>
+            {
+                { "temperature", 0 },
+                { "stop", new[] { "[TOOL:", "<|", "SYSTEM:" } } // Added stop tokens to prevent hallucination loops
+            }
+        };
+
         using var response = await _httpClient.PostAsJsonAsync("/api/chat", request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
@@ -35,10 +43,7 @@ public class OllamaClient(string baseUrl = "http://localhost:11434")
                 content = chunk?.Message?.Content;
                 isDone = chunk?.Done ?? false;
             }
-            catch (JsonException)
-            {
-                content = $"\n[DEBUG: Malformed JSON chunk: {line}]\n";
-            }
+            catch (JsonException) { /* Handle malformed JSON if necessary */ }
 
             if (content != null) yield return content;
             if (isDone) break;

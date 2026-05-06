@@ -5,7 +5,8 @@ namespace DeepSeekCLI;
 public record ChatRequest(
     [property: JsonPropertyName("model")] string Model,
     [property: JsonPropertyName("messages")] List<ChatMessage> Messages,
-    [property: JsonPropertyName("stream")] bool Stream = false
+    [property: JsonPropertyName("stream")] bool Stream = false,
+    [property: JsonPropertyName("options")] Dictionary<string, object>? Options = null
 );
 
 public record ChatMessage(

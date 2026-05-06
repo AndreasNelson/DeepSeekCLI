@@ -21,9 +21,9 @@ public class OllamaClient(string baseUrl = "http://localhost:11434")
             Options = new Dictionary<string, object>
             {
                 { "temperature", 0 },
-                { "num_ctx", 8192 }, // Increased context window
-                { "top_p", 0.9 },
-                { "stop", new[] { "[TOOL:", "<|", "SYSTEM:", "<｜begin▁of▁sentence｜>", "User:", "You:" } }
+                { "num_ctx", 8192 },
+                { "stop", new[] { "SYSTEM:", "<｜begin▁of▁sentence｜>", "User:", "You:" } } 
+                // REMOVED [TOOL: and <| from stop tokens as they were preventing the model from calling tools
             }
         };
 

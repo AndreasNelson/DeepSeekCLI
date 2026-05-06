@@ -6,15 +6,26 @@ var client = new OllamaClient();
 var history = new List<ChatMessage>();
 
 var systemPrompt = """
-You are a coding assistant. Use these tool tags:
-- [TOOL:LIST path]
-- [TOOL:READ path]
-- [TOOL:WRITE path] followed by a ```code block```
+You are an AI Software Engineer. You MUST use tools to interact with the system.
 
-Rules:
-1. Use EXACTLY the tags above.
-2. Provide COMPLETE code in WRITE blocks.
-3. Stop immediately after a tool call.
+COMMANDS:
+- LIST: [TOOL:LIST path]
+- READ: [TOOL:READ path]
+- WRITE: [TOOL:WRITE path] followed by a ```code block```
+
+PROTOCOL:
+1. State your plan.
+2. Call a tool.
+3. If you use [TOOL:WRITE], follow it IMMEDIATELY with the code block.
+4. Stop after the tool call.
+
+Example:
+I will create a logger.
+[TOOL:WRITE logger.py]
+```python
+print("logging")
+```
+
 Current Directory: {0}
 """;
 
@@ -25,7 +36,7 @@ AnsiConsole.Write(new FigletText("DeepSeek CLI").Centered().Color(Color.Cyan1));
 
 List<string> models;
 try { models = await client.ListModelsAsync(); }
-catch { AnsiConsole.MarkupLine("[red]Error: Could not connect to Ollama.[/]"); return; }
+catch { AnsiConsole.MarkupLine("[red]Error: Connection failed.[/]"); return; }
 
 var modelName = models.FirstOrDefault(m => m.Contains("deepseek", StringComparison.OrdinalIgnoreCase)) ?? models[0];
 AnsiConsole.MarkupLine($"[grey]Using model:[/] [cyan]{modelName}[/]");
@@ -51,22 +62,11 @@ while (true)
             AnsiConsole.Markup("[bold cyan]DeepSeek:[/] ");
             await foreach (var chunk in client.ChatStreamAsync(modelName, history))
             {
-                // INTERCEPT NATIVE DEEPSEEK TAGS
-                if (chunk.Contains("<｜") || chunk.Contains("function")) 
-                {
-                    // If the model starts using its native format, we just print it in orange for visibility
-                    // but we don't let it break our own parsing.
-                    AnsiConsole.Write(new Text(chunk, new Style(Color.DarkOrange)));
-                }
-                else
-                {
-                    Console.Write(chunk);
-                }
-                
+                Console.Write(chunk);
                 fullResponse += chunk;
                 
-                // Break early if we see a complete custom tool tag to prevent yapping
-                if (fullResponse.Contains("]") && (fullResponse.Contains("[TOOL:LIST") || fullResponse.Contains("[TOOL:READ"))) break;
+                // Break after a code block for WRITE tool
+                if (fullResponse.Contains("```") && fullResponse.LastIndexOf("```") > fullResponse.IndexOf("```") + 3 && fullResponse.EndsWith("\n")) break;
             }
             Console.WriteLine();
         });
@@ -74,59 +74,69 @@ while (true)
         if (string.IsNullOrWhiteSpace(fullResponse)) continue;
         history.Add(new ChatMessage("assistant", fullResponse));
 
-        // 1. NATIVE INTERCEPTOR: If it used native tags like in the last error
-        if (fullResponse.Contains("LIST") || fullResponse.Contains("READ") || fullResponse.Contains("WRITE"))
-        {
-            // Try to extract path even from the "broken" native format
-            var nativeMatch = Regex.Match(fullResponse, @"(?:LIST|READ|WRITE)\s+([a-zA-Z0-9\.\-\\_:\s]+)", RegexOptions.IgnoreCase);
-            if (nativeMatch.Success && !fullResponse.Contains("[TOOL:"))
-            {
-                var cmd = nativeMatch.Value.Trim().ToUpper();
-                if (cmd.StartsWith("LIST")) fullResponse = $"[TOOL:LIST {nativeMatch.Groups[1].Value.Trim()}]";
-                else if (cmd.StartsWith("READ")) fullResponse = $"[TOOL:READ {nativeMatch.Groups[1].Value.Trim()}]";
-                else if (cmd.StartsWith("WRITE")) fullResponse = $"[TOOL:WRITE {nativeMatch.Groups[1].Value.Trim()}]";
-            }
-        }
-
-        // 2. STANDARD PARSING
+        // 1. REGEX PARSING
         var listMatch = Regex.Match(fullResponse, @"\[TOOL:LIST\s+(.+?)\]", RegexOptions.IgnoreCase);
         var readMatch = Regex.Match(fullResponse, @"\[TOOL:READ\s+(.+?)\]", RegexOptions.IgnoreCase);
         var writeMatch = Regex.Match(fullResponse, @"\[TOOL:WRITE\s+(.+?)\]\s*```[\s\S]*?\n([\s\S]*?)```", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
+        // 2. HEURISTIC FALLBACK (If model misses the [TOOL:...] tag but gives a filename and code)
+        if (!writeMatch.Success)
+        {
+            var codeBlockMatch = Regex.Match(fullResponse, @"```[\s\S]*?\n([\s\S]*?)```");
+            if (codeBlockMatch.Success)
+            {
+                // Try to find a filename mentioned in the text
+                var fileMentionMatch = Regex.Match(fullResponse, @"(?:file|write to|save to|create)\s+[`""]?([\w\.\-/]+)[`""]?", RegexOptions.IgnoreCase);
+                if (fileMentionMatch.Success)
+                {
+                    var path = fileMentionMatch.Groups[1].Value.Trim().Replace("\"", "");
+                    var content = codeBlockMatch.Groups[1].Value;
+                    try
+                    {
+                        await File.WriteAllTextAsync(path, content);
+                        AnsiConsole.MarkupLine($"[yellow]SYSTEM: Heuristic match - Wrote {path}[/]");
+                        history.Add(new ChatMessage("system", $"File {path} has been written via heuristic."));
+                        processingTools = true;
+                    }
+                    catch { }
+                }
+            }
+        }
+
         if (listMatch.Success)
         {
-            var path = listMatch.Groups[1].Value.Trim().Replace("\"", "");
+            var path = listMatch.Groups[1].Value.Trim().Replace("\"", "").Replace("[", "").Replace("]", "");
             try
             {
-                var dir = string.IsNullOrWhiteSpace(path) ? "." : path;
+                var dir = string.IsNullOrWhiteSpace(path) || path == "path" ? "." : path;
                 var result = string.Join("\n", Directory.GetFileSystemEntries(dir).Select(Path.GetFileName));
                 AnsiConsole.MarkupLine($"[yellow]SYSTEM: Listed {dir}[/]");
-                history.Add(new ChatMessage("system", $"Files:\n{result}"));
+                history.Add(new ChatMessage("system", $"RESULT of LIST {dir}:\n{result}"));
                 processingTools = true;
             }
             catch (Exception ex) { history.Add(new ChatMessage("system", $"Error LIST: {ex.Message}")); processingTools = true; }
         }
         else if (readMatch.Success)
         {
-            var path = readMatch.Groups[1].Value.Trim().Replace("\"", "");
+            var path = readMatch.Groups[1].Value.Trim().Replace("\"", "").Replace("[", "").Replace("]", "");
             try
             {
                 var content = await File.ReadAllTextAsync(path);
                 AnsiConsole.MarkupLine($"[yellow]SYSTEM: Read {path}[/]");
-                history.Add(new ChatMessage("system", $"Content:\n{content}"));
+                history.Add(new ChatMessage("system", $"RESULT of READ {path}:\n{content}"));
                 processingTools = true;
             }
             catch (Exception ex) { history.Add(new ChatMessage("system", $"Error READ: {ex.Message}")); processingTools = true; }
         }
         else if (writeMatch.Success)
         {
-            var path = writeMatch.Groups[1].Value.Trim().Replace("\"", "");
+            var path = writeMatch.Groups[1].Value.Trim().Replace("\"", "").Replace("[", "").Replace("]", "");
             var content = writeMatch.Groups[2].Value;
             try
             {
                 await File.WriteAllTextAsync(path, content);
                 AnsiConsole.MarkupLine($"[yellow]SYSTEM: Wrote {path}[/]");
-                history.Add(new ChatMessage("system", $"Wrote {path} successfully."));
+                history.Add(new ChatMessage("system", $"SUCCESS: File {path} has been written."));
                 processingTools = true;
             }
             catch (Exception ex) { history.Add(new ChatMessage("system", $"Error WRITE: {ex.Message}")); processingTools = true; }
